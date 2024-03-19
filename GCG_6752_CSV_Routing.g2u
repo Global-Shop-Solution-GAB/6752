@@ -1,0 +1,277 @@
+﻿Program.Sub.Preflight.Start
+V.Global.bConOpen.Declare(Boolean, False)
+V.Global.sRemoteHost.Declare
+V.Global.sRemoteUser.Declare
+V.Global.sRemotePass.Declare
+V.Global.sRemotePort.Declare
+V.Global.sRemotePath.Declare
+V.Global.sNewPath6659.Declare
+V.Global.sNewPath6683.Declare
+V.Global.sNewPath6680.Declare
+V.Global.bError.Declare(Boolean)
+V.Global.bUnattended.Declare(Boolean)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'Brandon Medina 
+'Customer: Real Performance Machinery 
+'Quote: 13413
+'Desc: CSVs originate from paycom's SFTP server and are routed to projects' local folders. Projects 6659(this one), 6680 (Employee Expenses), and 6683 use this, and are sorted according to the naming conventions on the file names.
+'SFTP Credentials are maintained in GCG_6659_SFTP_Cred_Maint
+
+'AJC, May 2022
+'Modified for PTMW Inc
+
+F.Intrinsic.Control.Try
+	F.Intrinsic.Control.CallSub(createDirectories)
+	F.Intrinsic.Control.CallSub(get_SFTP_settings)
+	F.Intrinsic.Control.CallSub(routeFiles)
+	
+	F.Intrinsic.Control.CallSub(f_Main_UnLoad)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMessage, "ErrorNumber", V.Ambient.ErrorNumber, "ErrorDescription", V.Ambient.ErrorDescription, "Subroutine", V.Ambient.CurrentSubroutine, "UNATTENDED", V.Global.bUnattended, "Project", "6752", "ProjectTitle", "Paycom to GSS CSV Routing", "Callback", "f_Main_UnLoad")
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.createDirectories.Start
+'Check that all 3 local folders exists, and if not create them. 
+F.Intrinsic.Control.Try
+	V.Local.bExists.Declare
+	
+	F.Intrinsic.String.Build("{0}\CUSTOM\6752\NEW\", V.Caller.GlobalDir, V.Global.sNewPath6659)
+	F.Intrinsic.File.DirExists(V.Global.sNewPath6659, V.Local.bExists)
+	F.Intrinsic.Control.If(V.Local.bExists.Not)
+		F.Intrinsic.File.CreateDir(V.Global.sNewPath6659)
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.String.Build("{0}\CUSTOM\6680\NEW\", V.Caller.GlobalDir, V.Global.sNewPath6680)
+	F.Intrinsic.File.DirExists(V.Global.sNewPath6680, V.Local.bExists)
+	F.Intrinsic.Control.If(V.Local.bExists.Not)
+		F.Intrinsic.File.CreateDir(V.Global.sNewPath6680)
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.String.Build("{0}\CUSTOM\GCG_6683\", V.Caller.GlobalDir, V.Global.sNewPath6683)
+	F.Intrinsic.File.DirExists(V.Global.sNewPath6683, V.Local.bExists)
+	F.Intrinsic.Control.If(V.Local.bExists.Not)
+		F.Intrinsic.File.CreateDir(V.Global.sNewPath6683)
+	F.Intrinsic.Control.EndIf
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMessage, "ErrorNumber", V.Ambient.ErrorNumber, "ErrorDescription", V.Ambient.ErrorDescription, "Subroutine", V.Ambient.CurrentSubroutine, "UNATTENDED", V.Global.bUnattended, "Project", "6752", "ProjectTitle", "Paycom to GSS CSV Routing", "Callback", "f_Main_UnLoad")
+F.Intrinsic.Control.EndTry
+Program.Sub.createDirectories.End
+
+Program.Sub.routeFiles.Start
+V.Local.sFileList.Declare
+V.Local.i.Declare
+V.Local.j.Declare(Long)
+V.Local.sExtension.Declare
+V.Local.sFile.Declare
+V.Local.sMask.Declare(String, ".csv")
+V.Local.sLocalFileToOverWrite.Declare
+V.Local.sNewFileName.Declare(String, "newfile.csv")
+	
+'you have to create this sub in your script.
+F.Intrinsic.Control.AddEventHandler("SFTPDirList","Listdir")
+
+
+'Get all files from sftp server that pertain to employee reports, employee expenses, or , and download them to the local NEW directory
+F.Intrinsic.Control.Try
+	f.Communication.SFTP.SetProperty("SSHAcceptServerAuthentication","true")
+	f.Communication.SFTP.SetProperty("remoteHost", v.Global.sRemoteHost.Trim)
+	f.Communication.SFTP.SetProperty("User", v.Global.sRemoteUser.Trim)
+	f.Communication.SFTP.SetProperty("Password", v.Global.sRemotePass.Trim)
+	f.Communication.SFTP.SetProperty("remotePort", v.Global.sRemotePort)
+	f.Communication.SFTP.Logon
+	
+	f.Communication.SFTP.SetProperty("RemotePath", v.Global.sRemotePath)
+	
+	'This fires for every file in the remotepath on sftp server. 
+	F.Communication.SFTP.ListDirectory
+	
+	F.Communication.SFTP.Logoff
+
+F.Intrinsic.Control.Catch
+	F.Communication.SFTP.Logoff
+	F.Intrinsic.UI.Msgbox("Connection Failed")
+	F.Intrinsic.Control.CallSub(ErrorMessage, "ErrorNumber", V.Ambient.ErrorNumber, "ErrorDescription", V.Ambient.ErrorDescription, "Subroutine", V.Ambient.CurrentSubroutine, "UNATTENDED", V.Global.bUnattended, "Project", "6752", "ProjectTitle", "Paycom to GSS CSV Routing", "Callback", "f_Main_UnLoad")
+F.Intrinsic.Control.EndTry
+Program.Sub.routeFiles.End
+
+Program.Sub.Listdir.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String,"")
+v.Local.sTemp.Declare(String,"")
+V.Local.sFile.Declare(String,"")
+V.Local.dFileDate.Declare(Date)
+V.Local.dPrior.Declare(Date)
+V.Local.bIs6659File.Declare
+V.Local.bIs6680File.Declare
+V.Local.bIs6683File.Declare
+
+V.Local.sFile.Set(v.Args.Filename.UCase)
+V.Local.dFileDate.Set(V.Args.FileTime)
+
+
+	F.Intrinsic.Control.If(V.Local.sFile.Right3,=,"CSV")
+		F.Intrinsic.String.IsInString(V.Local.sFile, "GSS Employee Report", True, V.Local.bIs6659File)
+		F.Intrinsic.String.IsInString(V.Local.sFile, "GSS Expense Report", True, V.Local.bIs6680File)
+		'FILL OUT WHEN PAYCOM PROVIDES EXAMPLE FOR 6683
+		'F.Intrinsic.String.IsInString(V.Local.sFile, "", True, V.Local.bIs6683File)
+		
+		f.Communication.SFTP.SetProperty("RemoteFile",v.Args.filename)
+		f.Communication.SFTP.SetProperty("Overwrite", true)
+		
+		F.Intrinsic.Control.If(V.Local.bIs6659File)
+			f.Intrinsic.String.Build("{0}{1}",V.Global.sNewPath6659,v.Args.Filename,v.Local.sTemp)
+			f.Communication.SFTP.SetProperty("LocalFile",v.Local.sTemp)
+			f.Communication.SFTP.Download
+			F.Communication.SFTP.DeleteFile(V.Args.filename)
+'		F.Intrinsic.Control.ElseIf(V.Local.bIs6680File)
+'			f.Intrinsic.String.Build("{0}{1}",V.Global.sNewPath6680,v.Args.Filename,v.Local.sTemp)
+'			f.Communication.SFTP.SetProperty("LocalFile",v.Local.sTemp)
+'			f.Communication.SFTP.Download
+'			F.Communication.SFTP.DeleteFile(V.Args.filename)
+	'	F.Intrinsic.Control.ElseIf(V.Local.bIs6683File)
+	'		f.Intrinsic.String.Build("{0}{1}",V.Global.sNewPath6683,v.Args.Filename,v.Local.sTemp)
+	'		f.Communication.SFTP.SetProperty("LocalFile",v.Local.sTemp)
+	'		f.Communication.SFTP.Download
+	'		F.Communication.SFTP.DeleteFile(V.Args.filename)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.Control.ExitSub
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMessage, "ErrorNumber", V.Ambient.ErrorNumber, "ErrorDescription", V.Ambient.ErrorDescription, "Subroutine", V.Ambient.CurrentSubroutine, "UNATTENDED", V.Global.bUnattended, "Project", "6752", "ProjectTitle", "Paycom to GSS CSV Routing", "Callback", "f_Main_UnLoad")
+F.Intrinsic.Control.EndTry
+Program.Sub.Listdir.End
+
+Program.Sub.get_SFTP_settings.Start
+F.Intrinsic.Control.Try
+	V.Local.bTableExist.Declare
+	V.Local.sTemp.Declare
+	V.Local.baValue.Declare(ByteArray)
+
+	'Verify Custom table w SFTP settings exists, and that it has credentials in it 
+	F.ODBC.Connection!con.OpenCommonConnection
+	V.Global.bConOpen.Set(True)
+	F.ODBC.Connection!con.TableExists("GCG_6752_SETTINGS", V.Local.bTableExist)
+	F.Intrinsic.Control.If(V.Local.bTableExist)
+		F.Data.DataTable.CreateFromSQL("dtSFTPSettings", "con", "select * from GCG_6752_SETTINGS WHERE PAYCOM_TO_GSS = 'Y'")
+		F.Intrinsic.Control.If(V.DataTable.dtSFTPSettings.RowCount, =, 0)
+			F.Intrinsic.UI.Msgbox("No SFTP credential settings found. Please configure by logging in as SUPERVSR user and navigating to System Support > Administration > 6752 SFTP Credentials Maintenance.", "Warning")
+			F.Intrinsic.Control.End
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Else
+		F.Intrinsic.UI.Msgbox("Table GCG_6752_SETTINGS does not exist. Configure SFTP settings by logging in as SUPERVSR user and navigating to System Support > Administration > 6752 SFTP Credentials Maintenance.", "Warning")
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	
+	'Grab credentials and set to global variables 
+	V.Local.sTemp.Set(V.DataTable.dtSFTPSettings(0).REMOTEHOST!FieldValTrim)
+	F.Intrinsic.String.ConvertString2BA(V.Local.sTemp, V.Local.baValue)
+	F.Global.Encryption.Decrypt(V.Local.baValue,v.Local.sTemp)
+	V.Global.sRemoteHost.Set(V.Local.sTemp.Trim)
+	
+	V.Local.sTemp.Set(V.DataTable.dtSFTPSettings(0).REMOTEUSER!FieldValTrim)
+	F.Intrinsic.String.ConvertString2BA(V.Local.sTemp, V.Local.baValue)
+	F.Global.Encryption.Decrypt(V.Local.baValue,v.Local.sTemp)
+	V.Global.sRemoteUser.Set(V.Local.sTemp.Trim)
+	
+	V.Local.sTemp.Set(V.DataTable.dtSFTPSettings(0).REMOTEPASSWORD!FieldValTrim)
+	F.Intrinsic.String.ConvertString2BA(V.Local.sTemp, V.Local.baValue)
+	F.Global.Encryption.Decrypt(V.Local.baValue,v.Local.sTemp)
+	V.Global.sRemotePass.Set(V.Local.sTemp.Trim)
+	
+	V.Local.sTemp.Set(V.DataTable.dtSFTPSettings(0).REMOTEPORT!FieldValTrim)
+	F.Intrinsic.String.ConvertString2BA(V.Local.sTemp, V.Local.baValue)
+	F.Global.Encryption.Decrypt(V.Local.baValue,v.Local.sTemp)
+	V.Global.sRemotePort.Set(V.Local.sTemp.Trim)
+	
+	V.Local.sTemp.Set(v.DataTable.dtSFTPSettings(0).REMOTEPATH!FieldValTrim)
+	F.Intrinsic.String.ConvertString2BA(V.Local.sTemp, V.Local.baValue)
+	F.Global.Encryption.Decrypt(V.Local.baValue,v.Local.sTemp)
+	V.Global.sRemotePath.Set(V.Local.sTemp.Trim)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMessage, "ErrorNumber", V.Ambient.ErrorNumber, "ErrorDescription", V.Ambient.ErrorDescription, "Subroutine", V.Ambient.CurrentSubroutine, "UNATTENDED", V.Global.bUnattended, "Project", "6752", "ProjectTitle", "Paycom to GSS CSV Routing", "Callback", "f_Main_UnLoad")
+F.Intrinsic.Control.EndTry
+Program.Sub.get_SFTP_settings.End
+
+Program.Sub.f_Main_UnLoad.Start
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.If(V.Global.bConOpen)
+	F.ODBC.Connection!con.Close
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMessage, "ErrorNumber", V.Ambient.ErrorNumber, "ErrorDescription", V.Ambient.ErrorDescription, "Subroutine", V.Ambient.CurrentSubroutine, "UNATTENDED", V.Global.bUnattended, "Project", "6752", "ProjectTitle", "Paycom to GSS CSV Routing", "Callback", "f_Main_UnLoad")
+F.Intrinsic.Control.EndTry
+Program.Sub.f_Main_UnLoad.End
+
+Program.Sub.ErrorMessage.Start
+'basic error message for replacing catch block
+'this is really just for when printing the message and ending program
+'pass error number, error description, current subroutine
+'optional callback sub, this will be called before ending
+'optional unattended parameters, those subs may not exist if not using them but won't be called
+F.Intrinsic.Control.Try
+
+V.Local.iError.Declare(Long)
+V.Local.sErrorDescription.Declare(String)
+V.Local.sSubroutine.Declare(String)
+V.Local.sError.Declare(String)
+V.Local.bExists.Declare(Boolean)
+V.Local.sCallback.Declare(String)
+
+V.Local.iError.Set(V.Args.ErrorNumber)
+V.Local.sErrorDescription.Set(V.Args.ErrorDescription)
+V.Local.sSubroutine.Set(V.Args.Subroutine)
+
+'make sure we aren't in an error loop
+F.Intrinsic.Control.If(V.Global.bError)
+	F.Intrinsic.Control.End
+
+F.Intrinsic.Control.EndIf
+V.Global.bError.Set(True)
+
+F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}", V.Caller.ScriptFile, V.Ambient.Newline, V.Local.sSubroutine, V.Local.iError, V.Local.sErrorDescription, V.Ambient.GABVersion, V.Local.sError)
+
+F.Intrinsic.Variable.ArgExists("UNATTENDED", V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists)
+	F.Intrinsic.Control.If(V.Args.UNATTENDED)
+		F.Intrinsic.Control.CallSub(UnattendedErrorMessage, "MESSAGE", V.Local.sError, "PROJECT", V.Args.PROJECT, "PROJECTTITLE", V.Args.PROJECTTITLE)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Else
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Variable.ArgExists("Callback", V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists)
+	V.Local.sCallback.Set(V.Args.Callback.Trim)
+	F.Intrinsic.Control.CallSub(V.Local.sCallback)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+
+F.Intrinsic.Control.EndTry
+Program.Sub.ErrorMessage.End
+
+Program.Sub.Comments.Start
+${$5$}$3.0.0.0$}$1
+${$6$}$acollins$}$20220518145309985$}$h98hERc2yV72q0GaUGlwSaoK/aefTdVk/XotSp2jZHi8jHxaGy+E62mTeZUGX1IH7Wnt0tNWroX0scSsrZwPwg==
+Program.Sub.Comments.End
