@@ -1,0 +1,106 @@
+﻿Program.Sub.Preflight.Start
+
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'Brandon Medina 
+'Customer: Real Performance Machinery 
+'Quote: 13413
+'Desc: Script will run once a day and will check if any files have failed in the "FAIL" directories for the following 3 projects...
+'6659(this one), 6680 (Employee Expenses), and 6683. Script then emails the user set up in the SfTP credential maintenance program that there are errors that have occurred 
+F.Intrinsic.Control.Try
+	V.Local.iReturnCode.Declare
+	V.Local.bTableExist.Declare
+	V.Local.sTemp.Declare
+	V.Local.baValue.Declare(ByteArray)
+	V.Local.sUserID.Declare
+	V.Local.sCustomDir.Declare
+	V.Local.sSQL.Declare
+	V.Local.sMsg.Declare
+	V.Local.sRecipientNameEmail.Declare
+	V.Local.sFileDir.Declare
+	V.Local.sFileList6659.Declare
+	V.Local.sFileList6680.Declare
+	V.Local.sFileList6683.Declare
+	V.Local.bErrorFiles.Declare(Boolean, False)
+	
+	
+	'Check Directories 
+	F.Intrinsic.String.Build("{0}\CUSTOM", V.Caller.GlobalDir, V.Local.sCustomDir)
+
+	F.Intrinsic.String.Build("{0}\6752\FAIL\", V.Local.sCustomDir, V.Local.sFileDir)
+	F.Intrinsic.File.GetFileList(V.Local.sFileDir, V.Local.sFileList6659)
+	F.Intrinsic.String.Build("{0}\6680\FAIL\", V.Local.sCustomDir, V.Local.sFileDir)
+	F.Intrinsic.File.GetFileList(V.Local.sFileDir, V.Local.sFileList6680)
+	F.Intrinsic.String.Build("{0}\GCG_6683\Fail\", V.Local.sCustomDir, V.Local.sFileDir)
+	F.Intrinsic.File.GetFileList(V.Local.sFileDir, V.Local.sFileList6683)
+	
+	F.Intrinsic.Control.If(V.Local.sFileList6659, <>, "", OR, V.Local.sFileList6680, <>, "")
+		V.Local.bErrorFiles.Set(True)
+	F.Intrinsic.Control.ElseIf(V.Local.sFileList6683, <>, "")
+		V.Local.bErrorFiles.Set(True)
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.Control.If(V.Local.bErrorFiles.Not)
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	
+	'Continue w/ Emailing User 
+	F.Global.Messaging.IsCourierRunning(V.Local.iReturnCode)
+	F.Intrinsic.Control.If(V.Local.iReturnCode, <>, 3)
+		F.Intrinsic.UI.Msgbox("Courier 3 is not running. Please start up this service and try saving again to properly send out prospect emails", "Courier Not Running")
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	
+	'Verify Custom table w SFTP settings exists, and that it has credentials in it 
+	F.ODBC.Connection!con.OpenCommonConnection
+	'V.Global.bConOpen.Set(True)
+	F.ODBC.Connection!con.TableExists("GCG_6752_SETTINGS", V.Local.bTableExist)
+	F.Intrinsic.Control.If(V.Local.bTableExist)
+		F.Data.DataTable.CreateFromSQL("dtSFTPSettings", "con", "select * from GCG_6752_SETTINGS WHERE PAYCOM_TO_GSS = 'Y'")
+		F.Intrinsic.Control.If(V.DataTable.dtSFTPSettings.RowCount, =, 0)
+			F.Intrinsic.UI.Msgbox("No SFTP credential settings found. Please configure by logging in as SUPERVSR user and navigating to System Support > Administration > 6752 SFTP Credentials Maintenance.", "Warning")
+			F.Intrinsic.Control.End
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Else
+		F.Intrinsic.UI.Msgbox("Table GCG_6752_SETTINGS does not exist. Configure SFTP settings by logging in as SUPERVSR user and navigating to System Support > Administration > 6752 SFTP Credentials Maintenance.", "Warning")
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	
+	
+	'Grab user ID 
+	V.Local.sTemp.Set(V.DataTable.dtSFTPSettings(0).USER_ID_ERROR!FieldValTrim)
+	F.Intrinsic.String.ConvertString2BA(V.Local.sTemp, V.Local.baValue)
+	F.Global.Encryption.Decrypt(V.Local.baValue,v.Local.sTemp)
+	V.Local.sUserID.Set(V.Local.sTemp.Trim)
+	
+	'Build Error Msg Body
+	F.Intrinsic.String.Build("There are csv files that failed to upload for project(s) 6752. {0} Please check the directories for these projects at {1}.", V.Ambient.NewLine, V.Local.sCustomDir, V.Local.sMsg)
+	
+	'Send email 
+	F.Intrinsic.String.Build("select EMAIL from USER_INFORMATION where USER_ID = '{0}'", V.Local.sUserID, V.Local.sSQL)
+	F.ODBC.Connection!con.ExecuteAndReturn(V.Local.sSQL, V.Local.sRecipientNameEmail)
+	
+	F.ODBC.Connection!con.Close
+	'NEED AN AUTO EMAIL ADDRESS
+	F.Global.Messaging.QueueMessage(V.Caller.CompanyCode, V.Local.sUserID, "GCG_6752_Email_Error", "CSV Upload Failed for Custom Paycom Projects", "efenton@ptmw.com*!*Ed Fenton", V.Local.sRecipientNameEmail, V.Local.sMsg)
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.ErrorMsg.Start
+v.Local.sError.Declare
+
+
+'Generic Error message.
+f.Intrinsic.String.Build("Project GCG_6752_Emp_File_Update.g2u {0}{0}Subroutine: {1}{0}Error: {2} with Description: {3}", v.Ambient.NewLine, v.Args.CurrentSub, v.Ambient.ErrorNumber, v.Ambient.ErrorDescription, v.Local.sError)
+f.Intrinsic.UI.Msgbox(v.Local.sError)
+F.Intrinsic.Control.EndTry
+Program.Sub.ErrorMsg.End
+
+Program.Sub.Comments.Start
+${$5$}$3.0.0.0$}$1
+${$6$}$acollins$}$20220518123558725$}$h98hERc2yV72q0GaUGlwSaoK/aefTdVk/XotSp2jZHi8jHxaGy+E6+UPe2N3q1j7rjUbCzSjKRiG7EJ2LvVQ/w==
+Program.Sub.Comments.End
