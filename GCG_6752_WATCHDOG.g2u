@@ -1,0 +1,187 @@
+﻿Program.Sub.ScreenSU.Start
+Gui.fmWatch..Create(BaseForm)
+Gui.fmWatch..Caption("Paycom Payroll Transfer Watchdog (6752)")
+Gui.fmWatch..Size(393,136)
+Gui.fmWatch..MinX(0)
+Gui.fmWatch..MinY(0)
+Gui.fmWatch..Position(0,0)
+Gui.fmWatch..AlwaysOnTop(False)
+Gui.fmWatch..FontName("Tahoma")
+Gui.fmWatch..FontSize(8.25)
+Gui.fmWatch..ControlBox(True)
+Gui.fmWatch..MaxButton(True)
+Gui.fmWatch..MinButton(True)
+Gui.fmWatch..MousePointer(0)
+Gui.fmWatch..Moveable(True)
+Gui.fmWatch..Sizeable(True)
+Gui.fmWatch..ShowInTaskBar(True)
+Gui.fmWatch..TitleBar(True)
+Gui.fmWatch..Event(UnLoad,fmWatch_UnLoad)
+Gui.fmWatch.lblRT.Create(Label,"Last Run Time",True,90,16,0,93,9,True,0,"Tahoma",10,,0,0)
+Gui.fmWatch.lblRT.BorderStyle(0)
+Gui.fmWatch.lblRT.FontStyle(True,False,False,False,False)
+Gui.fmWatch.lblNR.Create(Label,"Next run in",True,70,16,0,93,30,True,0,"Tahoma",10,,0,0)
+Gui.fmWatch.lblNR.BorderStyle(0)
+Gui.fmWatch.lblNR.FontStyle(True,False,False,False,False)
+Gui.fmWatch.lblLasRun.Create(Label,"Last Run",True,49,16,0,194,9,True,0,"Tahoma",10,,0,0)
+Gui.fmWatch.lblLasRun.BorderStyle(0)
+Gui.fmWatch.lblNexRunIn.Create(Label,"3600",True,41,16,0,169,30,True,2,"Tahoma",10,,0,1)
+Gui.fmWatch.lblNexRunIn.BorderStyle(0)
+Gui.fmWatch.lblNexRunIn.ForeColor(255)
+Gui.fmWatch.lblNexRunIn.FontStyle(True,False,False,False,False)
+Gui.fmWatch.lblSec.Create(Label,"seconds.",True,57,16,0,214,30,True,0,"Tahoma",10,,0,0)
+Gui.fmWatch.lblSec.BorderStyle(0)
+Gui.fmWatch.lblSec.FontStyle(True,False,False,False,False)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+V.Global.bError.Declare(Boolean)
+V.Global.bUnattended.Declare(Boolean)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+Function.Intrinsic.UI.UsePixels ' Allows you to use Pixels instead of Twips throughout
+'TJS, Mar 2021
+'MUM Industries
+'This program is called from GCG_6284_TASK.g2u running hourly from the task scheduler.
+'When launched, this program will call GCG_6284_PAYROLL_XFER.g2u every 15 minutes for 
+'three iterations to collect payroll data and send it to Paycom's SFTP site.
+'It will then shutdown.
+
+'AJC May 2022
+'Modification for PTMW 
+'call GCG_6752_PAYROLL_XFER.g2u every hour
+
+V.Local.iRet.Declare
+V.Local.iStrt.Declare(Long,3600)
+V.Local.iEnd.Declare
+V.Local.iCnt.Declare
+V.Local.sGCG.Declare
+V.Local.iCurPid.Declare
+V.Local.iLastPid.Declare
+V.Local.bPidChk.Declare
+V.Local.sWatchPid.Declare
+
+F.Intrinsic.String.Build("{0}\CUSTOM\6752\GCG_6752_PID.pid",V.Caller.GlobalDir,V.Local.sWatchPid)
+
+F.Intrinsic.File.String2File(V.Local.sWatchPid,V.Ambient.PID)
+
+Gui.fmWatch..Show
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+
+F.Intrinsic.String.Build("{0}GCG_6752_PAYROLL_XFER.g2u",V.Caller.GasDir,V.Local.sGCG)
+
+
+
+F.ODBC.Connection!conts.ExecuteAndReturn("Select LAST_PID from GCG_6752_SETTINGS where REC_ID = '1'",V.Local.iLastPid)
+	
+F.Intrinsic.Task.PIDRunning(V.Local.iLastPid,V.Local.bPidChk)
+
+F.Intrinsic.Control.If(V.Local.bPidChk,<>,True)
+	F.Global.General.CallAsyncGAS(V.Local.sGCG,V.Local.iCurPid)
+	F.Intrinsic.String.Build("Update GCG_6752_SETTINGS set LAST_PID = '{0}' where REC_ID = '1'",V.Local.iCurPid)
+F.Intrinsic.Control.EndIf
+
+Gui.fmWatch.lblLasRun.Caption(V.Ambient.Now)
+F.Intrinsic.Debug.TimerStart(LAUNCH)
+	
+F.Intrinsic.Control.DoUntil(V.Local.iRet,=,V.Local.iStrt)
+	F.Intrinsic.Debug.TimerElapsed("LAUNCH",V.Local.iRet)
+	F.Intrinsic.Math.Sub(V.Local.iStrt,V.Local.iRet,V.Local.iEnd)
+		
+	Gui.fmWatch.lblNexRunIn.Caption(V.Local.iEnd)
+F.Intrinsic.Control.Loop
+	
+V.Local.iRet.Set(0)
+	
+
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.CallSub(fmWatch_UnLoad)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMessage, "ErrorNumber", V.Ambient.ErrorNumber, "ErrorDescription", V.Ambient.ErrorDescription, "Subroutine", V.Ambient.CurrentSubroutine, "UNATTENDED", V.Global.bUnattended, "Project", "6752", "ProjectTitle", "Paycom Watchdog", "Callback", "f_Main_UnLoad")
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.fmWatch_UnLoad.Start
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMessage, "ErrorNumber", V.Ambient.ErrorNumber, "ErrorDescription", V.Ambient.ErrorDescription, "Subroutine", V.Ambient.CurrentSubroutine, "UNATTENDED", V.Global.bUnattended, "Project", "6752", "ProjectTitle", "Paycom Watchdog", "Callback", "f_Main_UnLoad")
+F.Intrinsic.Control.EndTry
+Program.Sub.fmWatch_UnLoad.End
+
+Program.Sub.f_Main_UnLoad.Start
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMessage, "ErrorNumber", V.Ambient.ErrorNumber, "ErrorDescription", V.Ambient.ErrorDescription, "Subroutine", V.Ambient.CurrentSubroutine, "UNATTENDED", V.Global.bUnattended, "Project", "6752", "ProjectTitle", "Paycom Watchdog", "Callback", "f_Main_UnLoad")
+F.Intrinsic.Control.EndTry
+Program.Sub.f_Main_UnLoad.End
+
+Program.Sub.ErrorMessage.Start
+'basic error message for replacing catch block
+'this is really just for when printing the message and ending program
+'pass error number, error description, current subroutine
+'optional callback sub, this will be called before ending
+'optional unattended parameters, those subs may not exist if not using them but won't be called
+F.Intrinsic.Control.Try
+
+V.Local.iError.Declare(Long)
+V.Local.sErrorDescription.Declare(String)
+V.Local.sSubroutine.Declare(String)
+V.Local.sError.Declare(String)
+V.Local.bExists.Declare(Boolean)
+V.Local.sCallback.Declare(String)
+
+V.Local.iError.Set(V.Args.ErrorNumber)
+V.Local.sErrorDescription.Set(V.Args.ErrorDescription)
+V.Local.sSubroutine.Set(V.Args.Subroutine)
+
+'make sure we aren't in an error loop
+F.Intrinsic.Control.If(V.Global.bError)
+	F.Intrinsic.Control.End
+
+F.Intrinsic.Control.EndIf
+V.Global.bError.Set(True)
+
+F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}", V.Caller.ScriptFile, V.Ambient.Newline, V.Local.sSubroutine, V.Local.iError, V.Local.sErrorDescription, V.Ambient.GABVersion, V.Local.sError)
+
+F.Intrinsic.Variable.ArgExists("UNATTENDED", V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists)
+	F.Intrinsic.Control.If(V.Args.UNATTENDED)
+		F.Intrinsic.Control.CallSub(UnattendedErrorMessage, "MESSAGE", V.Local.sError, "PROJECT", V.Args.PROJECT, "PROJECTTITLE", V.Args.PROJECTTITLE)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Else
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Variable.ArgExists("Callback", V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists)
+	V.Local.sCallback.Set(V.Args.Callback.Trim)
+	F.Intrinsic.Control.CallSub(V.Local.sCallback)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Caller.ScriptFile,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+
+F.Intrinsic.Control.EndTry
+Program.Sub.ErrorMessage.End
+
+Program.Sub.Comments.Start
+${$5$}$3.0.0.0$}$1
+${$6$}$acollins$}$20220517135201138$}$h98hERc2yV72q0GaUGlwSaoK/aefTdVk/XotSp2jZHhdfLtDX00ee+fzSNLyVaf6yPy4WPl/PgNFYJVJuAj3HQ==
+Program.Sub.Comments.End
