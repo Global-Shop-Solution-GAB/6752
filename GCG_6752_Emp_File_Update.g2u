@@ -1,0 +1,469 @@
+﻿Program.Sub.Preflight.Start
+V.Global.bConOpen.Declare(Boolean, False)
+V.Global.sNewPath.Declare
+V.Global.sPassPath.Declare
+V.Global.sFailPath.Declare
+V.Global.sCurrentFile.Declare
+V.Global.bError.Declare(Boolean)
+V.Global.bUnattended.Declare(Boolean)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'Brandon Medina 
+'Customer: Real Performance Machinery 
+'Quote: 13413
+'Desc: Project will go through local directory and parse csv files by age to update/maintain the employee master file in GSS that work on jobs. CSVs originate from paycom's SFTP server and are routed to projects 
+'6659(this one), 6680 (Employee Expenses), and 6683 according to the naming conventions on the file names. See GCG_6659_CSV_Routing for that logic
+F.Intrinsic.Control.Try
+
+	F.Intrinsic.Control.CallSub(createDirectories)
+	'Sorts file ages, and processes files into their respective datatables in that order, using either callwrapper, or direct upload to EMPLOYEE_MASTER table
+	F.Intrinsic.Control.CallSub(sortFileAges)
+	
+	F.Intrinsic.Control.CallSub(f_Main_Unload)
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.createDirectories.Start
+F.Intrinsic.Control.Try
+	V.Local.bExists.Declare
+	
+	'Go through checking if all 3 folder paths exists. If not create it. Update constant file paths used throughout script
+	F.Intrinsic.String.Build("{0}\CUSTOM\6752\NEW\", V.Caller.GlobalDir, V.Global.sNewPath)
+	F.Intrinsic.File.DirExists(V.Global.sNewPath, V.Local.bExists)
+	F.Intrinsic.Control.If(V.Local.bExists.Not)
+		F.Intrinsic.File.CreateDir(V.Global.sNewPath)
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.String.Build("{0}\CUSTOM\6752\PASS\", V.Caller.GlobalDir, V.Global.sPassPath)
+	F.Intrinsic.File.DirExists(V.Global.sPassPath, V.Local.bExists)
+	F.Intrinsic.Control.If(V.Local.bExists.Not)
+		F.Intrinsic.File.CreateDir(V.Global.sPassPath)
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.String.Build("{0}\CUSTOM\6752\FAIL\", V.Caller.GlobalDir, V.Global.sFailPath)
+	F.Intrinsic.File.DirExists(V.Global.sFailPath, V.Local.bExists)
+	F.Intrinsic.Control.If(V.Local.bExists.Not)
+		F.Intrinsic.File.CreateDir(V.Global.sFailPath)
+	F.Intrinsic.Control.EndIf
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.EndTry
+Program.Sub.createDirectories.End
+
+Program.Sub.sortFileAges.Start
+F.Intrinsic.Control.Try
+'This sub will go through every file in the new directory in order of oldest > newest, and pass it along to the subroutine for processing in order. 
+	V.Local.sFileList.Declare
+	V.Local.sSortedFileList.Declare
+	V.Local.i.Declare
+	V.Local.sNewFileName.Declare(String, "newfile.csv")
+	V.Local.sFQPFile.Declare
+	
+	'Start by grabbing file list 
+	F.Intrinsic.File.GetFileList(V.Global.sNewPath, , V.Local.sFileList)
+	F.Intrinsic.Control.If(V.Local.sFileList, <>, "")
+		F.Intrinsic.String.Split(V.Local.sFileList, ":", V.Local.sFileList)
+
+		'Add to sortedfilelist in order from oldest to newest file index 0 -> N
+		F.Intrinsic.String.SortAsc(V.Local.sFileList, V.Local.sSortedFileList)
+		
+		
+		F.Intrinsic.Control.For(V.Local.i, 0, V.Local.sSortedFileList.UBound, 1)
+			F.Intrinsic.String.Build("{0}{1}", V.Global.sNewPath, V.Local.sSortedFileList(V.Local.i), V.Local.sFQPFile)
+			F.Intrinsic.Control.CallSub(processFile, current_file, V.Local.sFQPFile, file_name, V.Local.sSortedFileList(V.Local.i))
+		F.Intrinsic.Control.Next(V.Local.i)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.EndTry
+Program.Sub.sortFileAges.End
+
+Program.Sub.processFile.Start
+F.Intrinsic.Control.Try
+	'This sub will begin by taking in a data table with all spreadsheet info in it, and route it to the correct subroutines by creating seperate datatables that each one will take in 
+	V.Local.sFile.Declare
+	'MOD AFTER TESTING
+	'V.Local.sFile.Set(V.Args.current_file)
+	'F.Intrinsic.String.Build("{0}\20220401100024_GSS Employee Report_5cb1a7f9_.csv", V.Caller.FilesDir, V.Local.sFile)
+	V.Local.sEmpInDB.Declare
+	V.Local.sFilter.Declare
+	V.Local.sSQL.Declare
+	V.Local.sCSVExpectedHeaders.Declare
+	V.Local.sError.Declare
+	V.Local.iRow.Declare
+	V.Local.sModdedEmpID.Declare
+	V.Local.sModdedHireDate.Declare
+	V.Local.sModdedTermDate.Declare
+	V.Local.sPayFreq.Declare
+	V.Local.sPayType.Declare
+	V.Local.sName.Declare
+	V.Local.sNameTemp.Declare
+	V.Local.sLastName.Declare
+	V.Local.sFirstName.Declare
+	V.Local.sMiddleInitial.Declare
+	V.Local.sFinalName.Declare
+	V.Local.iLastNameCount.Declare
+	V.Local.sRegexReturn.Declare
+	V.Local.bRegContainsStr.Declare
+	V.Local.sDepartment.Declare
+	V.Local.iRet.Declare
+	V.Local.sPassFile.Declare
+
+	
+	F.Intrinsic.Control.If(V.DataTable.dtAllEmployees.Exists)
+		F.Data.Datatable.Close("dtAllEmployees")
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.Control.If(V.DataTable.dtRawData.Exists)
+		F.Data.DataTable.Close("dtRawData")
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.Control.If(V.DataTable.dtNewEmployees.Exists)
+		F.Data.DataTable.Close("dtNewEmployees")
+	F.Intrinsic.Control.EndIf
+
+	F.Intrinsic.Control.If(V.DataTable.dtUpdateEmp.Exists)
+		F.Data.DataTable.Close("dtUpdateEmp")
+	F.Intrinsic.Control.EndIf
+'	
+'	F.Intrinsic.Control.If(V.Dictionary.dictDepartments.Exists)
+'		F.Data.Dictionary.Close("dictDepartments")
+'	F.Intrinsic.Control.EndIf
+
+	'Set this global variable to denote which file is currently being worked on. Will be accessed by Error subroutine to know which file to move should it fail on the upload or update
+	V.Local.sFile.Set(V.Args.current_file)
+	V.Global.sCurrentFile.Set(V.Local.sFile)
+	
+	F.Intrinsic.Control.If(V.Global.bConOpen.Not)
+		F.ODBC.Connection!con.OpenCompanyConnection
+		V.Global.bConOpen.Set(True)
+	F.Intrinsic.Control.EndIf
+	
+	V.Local.sSQL.Set("select ltrim(rtrim(EMPLOYEE)) as EMPLOYEE_ID, NAME, DATE_HIRE as HIRE_DATE, DATE_TERMINATION as TERMINATION_DATE, EMPL_INITIALS, SHIFT, DEPT_EMPLOYEE AS DEPARTMENT,PR_BALANCE_GROUP as BALANCING_GROUP, RATE as PAY_RATE, FREQUENCY as PAY_FREQUENCY, PAY_TYPE from V_EMPLOYEE_MSTR")
+	F.Data.DataTable.CreateFromSQL("dtAllEmployees", "con", V.Local.sSQL)
+	
+	'Grab all employees present in DB tables
+	F.Data.DataTable.ColumnToString("dtAllEmployees", "EMPLOYEE_ID", V.Local.sEmpInDB)
+	F.Intrinsic.String.Replace(V.Local.sEmpInDB, "*!*", "','", V.Local.sEmpInDB)
+	V.Local.sEmpInDB.Set(V.Local.sEmpInDB.Trim)
+	
+	
+	'Balancing Group not set up right now. So remove for now 
+	F.Data.DataTable.CreateFromCSV("dtRawData", V.Local.sFile, "EmployeeID*!*Name*!*HireDate*!*TermDate*!*PayRate*!*Salary*!*PayFreq*!*PayType*!*Department", "String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String", True)
+	
+	'F.Data.DataTable.AddColumn("dtRawData", "Salary", "String")
+	
+	'Verify that the headers in the CSV match what is expected. 
+	V.Local.sCSVExpectedHeaders.Set("Employee_Code*!*Employee_Name*!*Hire_Date*!*Termination_Date*!*Rate_1*!*Salary*!*Pay_Frequency*!*Pay_Type*!*Department")
+	
+	F.Intrinsic.Control.If(V.DataTable.dtRawData(0).FullRow, <>, V.Local.sCSVExpectedHeaders)
+		F.Intrinsic.String.Build("CSV {0}, not in the format it needs to be in. Please double check that Paycom export is in correct format, or contact GSS for assistance.", V.Local.sFile, V.Local.sError)
+		F.Intrinsic.UI.Msgbox(V.Local.sError)
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+
+	F.Data.DataTable.DeleteRow("dtRawData", 0)
+	
+	'Add PSQL Friendly Name Column that will be used in the update method
+	F.Data.DataTable.AddColumn("dtRawData", "PSQLName", "String")
+	
+	
+	'Format table to match what GSS expects
+	F.Intrinsic.Control.For(V.Local.iRow, 0, V.DataTable.dtRawData.RowCount--)
+		'Add leading 0s to ClockSeq # (What paycom calls Employee Number)
+		F.Intrinsic.Control.If(V.DataTable.dtRawData(V.Local.iRow).EmployeeID!FieldValTrim, <>, "")
+			F.Intrinsic.String.LPad(V.DataTable.dtRawData(V.Local.iRow).EmployeeID!FieldValTrim, "0", 5, V.Local.sModdedEmpID)
+		F.Intrinsic.Control.Else
+			V.Local.sModdedEmpID.Set("")
+		F.Intrinsic.Control.EndIf
+		
+		'Modify Termination and Hire Date format to MMDDYY. 
+		V.Local.sModdedHireDate.Set(V.DataTable.dtRawData(V.Local.iRow).HireDate!FieldValTrim)
+		V.Local.sModdedHireDate.Set(V.Local.sModdedHireDate.FormatMMDDYY)
+		
+			'Format doesn't do anything with 00/00/00000, manually check this...
+		V.Local.sModdedTermDate.Set(V.DataTable.dtRawData(V.Local.iRow).TermDate!FieldValTrim)
+		F.Intrinsic.Control.If(V.Local.sModdedTermDate, <>, "00/00/0000")
+			V.Local.sModdedTermDate.Set(V.Local.sModdedTermDate.FormatMMDDYY)
+		F.Intrinsic.Control.Else
+			V.Local.sModdedTermDate.Set("000000")
+		F.Intrinsic.Control.EndIf
+		
+		'Csv currently exports names as LAST, FIRST M. Need it to be First M. Last
+			'Split according to comma, to keep last name and first/middle separated 
+		V.Local.sName.Redim(0, 0)
+		V.Local.sNameTemp.Redim(0, 0)
+		V.Local.sLastName.Redim(0, 0)
+		V.Local.sRegexReturn.Redim(0, 0)
+		F.Intrinsic.String.Split(V.DataTable.dtRawData(V.Local.iRow).Name!FieldValTrim, ", ", V.Local.sName)
+		
+			'(Accounts for names like Jr, Sr, or I, II, or second last names etc)
+		F.Intrinsic.String.Split(V.Local.sName(0), " ", V.Local.sLastName)
+		F.Intrinsic.Control.If(V.Local.sLastName.UBound, >, 0)
+			F.Intrinsic.Control.For(V.Local.iLastNameCount, 1, V.Local.sLastName.UBound, 1)
+			'Use regex to check if last name array element contains Roman Numerals. If so, just concat, otherwise, use PCase, as it is just a name 
+			'For explanation of regex, go to https://stackoverflow.com/questions/267399/how-do-you-match-only-valid-roman-numerals-with-a-regular-expression
+				F.Intrinsic.Control.If(V.Local.iLastNameCount, =, 1)
+					F.Intrinsic.String.RegExMatch(V.Local.sLastName(V.Local.iLastNameCount), "M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})", , V.Local.sRegexReturn)
+					'This accounts for empty string return if regex is unsuccessful at finding a roman numeral
+					F.Intrinsic.String.IsInString(V.Local.sRegexReturn, V.Local.sLastName(V.Local.iLastNameCount), False, V.Local.bRegContainsStr)
+					F.Intrinsic.Control.If(V.Local.bRegContainsStr)
+						F.Intrinsic.String.Concat(V.Local.sLastName(0).PCase, " ", V.Local.sLastName(V.Local.iLastNameCount), V.Local.sNameTemp)
+					F.Intrinsic.Control.Else
+						F.Intrinsic.String.Concat(V.Local.sLastName(0).PCase, " ", V.Local.sLastName(V.Local.iLastNameCount).PCase, V.Local.sNameTemp)
+					F.Intrinsic.Control.EndIf
+				F.Intrinsic.Control.Else
+			'Use regex to check if last name array element contains Roman Numerals. If so, just concat, otherwise, use PCase, as it is just a name 
+					F.Intrinsic.String.RegExMatch(V.Local.sLastName(V.Local.iLastNameCount), "M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})", , V.Local.sRegexReturn)
+					F.Intrinsic.String.IsInString(V.Local.sRegexReturn, V.Local.sLastName(V.Local.iLastNameCount), False, V.Local.bRegContainsStr)
+					F.Intrinsic.Control.If(V.Local.bRegContainsStr)
+						F.Intrinsic.String.Concat(V.Local.sNameTemp, " ", V.Local.sLastName(V.Local.iLastNameCount), V.Local.sNameTemp)
+					F.Intrinsic.Control.Else
+						F.Intrinsic.String.Concat(V.Local.sNameTemp, " ", V.Local.sLastName(V.Local.iLastNameCount).PCase, V.Local.sNameTemp)
+					F.Intrinsic.Control.EndIf
+				F.Intrinsic.Control.EndIf	
+			F.Intrinsic.Control.Next(V.Local.iLastNameCount)
+	
+			
+			V.Local.sLastName.Set(V.Local.sNameTemp.Trim)
+		F.Intrinsic.Control.Else
+			V.Local.sLastName.Set(V.Local.sName(0).PCase)
+		F.Intrinsic.Control.EndIf
+		
+		
+		F.Intrinsic.String.Split(V.Local.sName(1), " ", V.Local.sNameTemp)
+		V.Local.sFirstName.Set(V.Local.sNameTemp(0).PCase)
+		F.Intrinsic.Control.If(V.Local.sNameTemp.UBound, >, 0)
+			V.Local.sMiddleInitial.Set(V.Local.sNameTemp(1).Left1)
+			V.Local.sMiddleInitial.Set(V.Local.sMiddleInitial.UCase)
+			'F.Intrinsic.String.Concat(V.Local.sMiddleInitial, ".", V.Local.sMiddleInitial)
+		F.Intrinsic.Control.Else
+			V.Local.sMiddleInitial.Set("")
+		F.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.Control.If(V.Local.sMiddleInitial, =, "")
+			F.Intrinsic.String.Build("{0}, {1}", V.Local.sLastName.UCase, V.Local.sFirstName.UCase, V.Local.sFinalName)
+		'	F.Intrinsic.String.Build("{0} {1}", V.Local.sFirstName, V.Local.sLastName, V.Local.sFinalName)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Build("{0}, {1} {2}", V.Local.sLastName.UCase, V.Local.sFirstName.UCase, V.Local.sMiddleInitial.UCase, V.Local.sFinalName)
+		F.Intrinsic.Control.EndIf
+		
+		'For pay frequency and type, this appears as full text. Only need first letter 
+		V.Local.sPayFreq.Set(V.DataTable.dtRawData(V.Local.iRow).PayFreq!FieldValTrim)
+		V.Local.sPayFreq.Set(V.Local.sPayFreq.Left1)
+		F.Intrinsic.String.LPad(V.Local.sPayFreq, " ", 1, V.Local.sPayFreq)
+		V.Local.sPayType.Set(V.DataTable.dtRawData(V.Local.iRow).PayType!FieldValTrim)
+		V.Local.sPayType.Set(V.Local.sPayType.Left1)
+		F.Intrinsic.String.LPad(V.Local.sPayType, " ", 1, V.Local.sPayType)
+			'From paycom, can have pay type commission. GSS only allows salary or hourly. Change to salary
+		F.Intrinsic.Control.If(V.Local.sPayType, =, "C")
+			V.Local.sPayType.Set("S")
+		F.Intrinsic.Control.EndIf
+		
+		V.Local.sDepartment.Set(V.DataTable.dtRawData(V.Local.iRow).Department!FieldValTrim)
+		V.Local.sDepartment.Set(V.Local.sDepartment.UCase)
+		
+		'Paycom is exporting pay rate for hourly and salary employees under 2 different columns. Get amount from salary column into pay rate. 
+		F.Intrinsic.Control.If(V.Local.sPayType, =, "S")
+			F.Data.DataTable.SetValue("dtRawData", V.Local.iRow, "PayRate", V.DataTable.dtRawData(V.Local.iRow).Salary!FieldValTrim)
+		F.Intrinsic.Control.EndIf
+		
+		
+		F.Data.DataTable.SetValue("dtRawData", V.Local.iRow, "EmployeeID", V.Local.sModdedEmpID, "HireDate", V.Local.sModdedHireDate, "TermDate", V.Local.sModdedTermDate, "PayFreq", V.Local.sPayFreq, "PayType", V.Local.sPayType, "Name", V.Local.sFinalName, "PSQLName", V.Local.sFinalName.PSQLFriendly)
+	F.Intrinsic.Control.Next(V.Local.iRow)
+	
+	'Use DEPARTMENTS table to turn department description into the DEPT_ID expected. Otherwise if it's not in there, default to blank to avoid errors
+	V.Local.sSQL.Set("select ltrim(rtrim(DEPT_NAME)), ltrim(rtrim(DEPT_ID)) from DEPARTMENTS")
+	F.Data.Dictionary.CreateFromSQL("dictDepartments", "con", V.Local.sSQL)
+	F.Data.Dictionary.SetDefaultReturn("dictDepartments", "")
+
+	F.Data.DataTable.FillFromDictionary("dtRawData", "dictDepartments", "Department", "Department")
+	F.Data.Dictionary.Close("dictDepartments")
+
+	'Update Employees: dtUpdateEmp. Exclude Owners
+	F.Intrinsic.String.Build("EmployeeID in ('{0}') ", V.Local.sEmpInDB, V.Local.sFilter)
+	F.Data.DataView.Create("dtRawData", "dvUpdateEmp", 22, V.Local.sFilter, )
+	F.Data.DataView.ToDataTable("dtRawData", "dvUpdateEmp", "dtUpdateEmp", True)
+	
+	F.Data.DataView.Close("dtRawData", "dvUpdateEmp")
+	
+
+	'New employees: dtNewEmployees. Exclude Owners
+	F.Intrinsic.String.Build("EmployeeID not in ('{0}') and EmployeeID <> '' ", V.Local.sEmpInDB, V.Local.sFilter)
+	F.Data.DataView.Create("dtRawData", "dvNewEmployees", 22, V.Local.sFilter, )
+	F.Data.DataView.ToDataTable("dtRawData", "dvNewEmployees", "dtNewEmployees", True)
+	
+	F.Data.DataView.Close("dtRawData", "dvNewEmployees")
+	
+	F.Intrinsic.Control.CallSub(employeeUpdate)
+	F.Intrinsic.Control.CallSub(employeeUpload)
+	
+	'Means File was accepted and changes made to system. Move to Pass folder 
+	F.Intrinsic.String.Build("{0}{1}", V.Global.sPassPath, V.Args.file_name, V.Local.sPassFile)
+	F.Intrinsic.File.MoveFile(V.Global.sCurrentFile, V.Local.sPassFile, V.Local.iRet)
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.EndTry
+Program.Sub.processFile.End
+
+Program.Sub.employeeUpload.Start
+F.Intrinsic.Control.Try
+	'Builds Employee.txt file for use in Payroll.UploadEmployees Callwrapper. File format is fixed text, with each record being 1398 characters long. 
+	'Refer to GS Help for 1Shot Program UPLEMPL for more info 
+	V.Local.sTextFileLoc.Declare
+	V.Local.sEmpNum.Declare
+	V.Local.sEmpName.Declare
+	V.Local.sHireDate.Declare
+	V.Local.sTermDate.Declare
+	V.Local.sInitials.Declare
+	V.Local.sDepartment.Declare
+	V.Local.sShift.Declare
+	V.Local.fPayRate.Declare
+	V.Local.sPayRate.Declare
+	V.Local.sPayFreq.Declare
+	V.Local.sPayType.Declare
+	V.Local.sBalancingGroup.Declare
+	V.Local.sFile.Declare
+	V.Local.iRow.Declare
+	V.Local.sBlanks.Declare
+	
+	F.Intrinsic.Control.If(V.DataTable.dtNewEmployees.RowCount, =, 0)
+		F.Intrinsic.Control.ExitSub
+	F.Intrinsic.Control.EndIf
+
+	
+	'Build Employee.txt file
+	F.Intrinsic.Control.For(V.Local.iRow, 0, V.DataTable.dtNewEmployees.RowCount--, 1)
+		F.Intrinsic.Control.If(V.Local.iRow, >, 0)
+			F.Intrinsic.String.Build("{0}{1}", V.Local.sFile, V.Ambient.NewLine, V.Local.sFile)
+		F.Intrinsic.Control.EndIf
+		'Add Emp ID, Name and Blanks
+		F.Intrinsic.String.LPad(V.DataTable.dtNewEmployees(V.Local.iRow).EmployeeID!FieldValTrim, "0", 5, V.Local.sEmpNum)
+		F.Intrinsic.String.RPad(V.DataTable.dtNewEmployees(V.Local.iRow).Name!FieldValTrim, " ", 30, V.Local.sEmpName)
+		F.Intrinsic.String.LPad("", " ", 75, V.Local.sBlanks)
+		F.Intrinsic.String.Build("{0}{1}{2}{3}", V.Local.sFile, V.Local.sEmpNum, V.Local.sEmpName, V.Local.sBlanks, V.Local.sFile)
+		'Add Hire date, termination date and blanks
+		V.Local.sHireDate.Set(V.DataTable.dtNewEmployees(V.Local.iRow).HireDate!FieldValTrim)
+		V.Local.sTermDate.Set(V.DataTable.dtNewEmployees(V.Local.iRow).TermDate!FieldValTrim)
+		'V.Local.sHireDate.Set(V.Local.sHireDate.FormatMMDDYY)
+		F.Intrinsic.String.LPad("", " ", 50, V.Local.sBlanks)
+		F.Intrinsic.String.Build("{0}{1}{2}{3}", V.Local.sFile, V.Local.sHireDate, V.Local.sTermDate, V.Local.sBlanks, V.Local.sFile)
+		'Add Emp initials and blanks
+	'	F.Intrinsic.String.LPad(V.DataTable.dtNewEmployees(V.Local.iRow).EmpInitials!FieldValTrim, " ", 3, V.Local.sInitials)
+		F.Intrinsic.String.LPad("", " ", 93, V.Local.sBlanks)
+	'	F.Intrinsic.String.Build("{0}{1}{2}", V.Local.sFile, V.Local.sInitials, V.Local.sBlanks, V.Local.sFile)
+		F.Intrinsic.String.Build("{0}{1}", V.Local.sFile, V.Local.sBlanks, V.Local.sFile)
+		'OLD DEPARTMENT LOGIC - LEAVING IN IN CASE PTMW EVER STARTS USING DEPARTMENTS
+'		'Add Department, Blanks, then shift, pay rate
+'		F.Intrinsic.String.LPad(V.DataTable.dtNewEmployees(V.Local.iRow).Department!FieldValTrim, " ", 4, V.Local.sDepartment)
+'		F.Intrinsic.String.LPad("", " ", 4, V.Local.sBlanks)
+'		F.Intrinsic.String.LPad(V.DataTable.dtNewEmployees(V.Local.iRow).Shift!FieldValTrim, " ", 1, V.Local.sShift)
+'		V.Local.fPayRate.Set(V.DataTable.dtNewEmployees(V.Local.iRow).PayRate!FieldVal)
+'		V.Local.fPayRate.Set(V.Local.fPayRate.Currency)
+'		F.Intrinsic.String.LPad(V.Local.fPayRate, " ", 16, V.Local.sPayRate)
+'		F.Intrinsic.String.Build("{0}{1}{2}{3}{4}", V.Local.sFile, V.Local.sDepartment, V.Local.sBlanks, V.Local.sShift, V.Local.sPayRate, V.Local.sFile)
+		'Add  Blanks, then shift, pay rate
+		
+		F.Intrinsic.String.LPad("", " ", 9, V.Local.sBlanks)
+	'	F.Intrinsic.String.LPad(V.DataTable.dtNewEmployees(V.Local.iRow).Shift!FieldValTrim, " ", 1, V.Local.sShift)
+		V.Local.fPayRate.Set(V.DataTable.dtNewEmployees(V.Local.iRow).PayRate!FieldVal)
+		V.Local.fPayRate.Set(V.Local.fPayRate.Currency)
+		F.Intrinsic.String.LPad(V.Local.fPayRate, " ", 16, V.Local.sPayRate)
+	'	F.Intrinsic.String.Build("{0}{1}{2}{3}", V.Local.sFile,V.Local.sBlanks, V.Local.sShift, V.Local.sPayRate, V.Local.sFile)
+		F.Intrinsic.String.Build("{0}{1}{2}", V.Local.sFile,V.Local.sBlanks, V.Local.sPayRate, V.Local.sFile)
+		'Add more blanks
+		F.Intrinsic.String.LPad("", " ", 16, V.Local.sBlanks)
+		F.Intrinsic.String.Build("{0}{1}", V.Local.sFile, V.Local.sBlanks, V.Local.sFile)
+		'Add Pay Freq, pay type and blanks
+		F.Intrinsic.String.LPad(V.DataTable.dtNewEmployees(V.Local.iRow).PayFreq!FieldValTrim, " ", 1, V.Local.sPayFreq)
+		F.Intrinsic.String.LPad(V.DataTable.dtNewEmployees(V.Local.iRow).PayType!FieldValTrim, " ", 1, V.Local.sPayType)
+		F.Intrinsic.String.LPad("", " ", 1090, V.Local.sBlanks)
+		F.Intrinsic.String.Build("{0}{1}{2}{3}", V.Local.sFile, V.Local.sPayFreq, V.Local.sPayType, V.Local.sBlanks, V.Local.sFile)
+	F.Intrinsic.Control.Next(V.Local.iRow)
+	'F.Intrinsic.String.Concat(V.Local.sFile, V.Ambient.NewLine, V.Local.sFile)
+	
+	F.Intrinsic.String.Build("{0}\UploadEmployees.txt", V.Caller.FilesDir, V.Local.sTextFileLoc)
+	F.Intrinsic.File.String2File(V.Local.sTextFileLoc, V.Local.sFile)
+
+	'Upload using Callwrapper 
+	F.Global.Callwrapper.New("CreateEmp", "Payroll.UploadEmployees")
+	F.Global.Callwrapper.SetProperty("CreateEmp", "Company", V.Caller.CompanyCode)
+	F.Global.Callwrapper.SetProperty("CreateEmp", "Terminal", V.Caller.Terminal)
+	F.Global.Callwrapper.SetProperty("CreateEmp", "CallingProgram", "GCG_6752")
+	F.Global.Callwrapper.SetProperty("CreateEmp", "PurgePrior", False)
+	F.Global.Callwrapper.SetProperty("CreateEmp", "AllowUpdates", True)
+	F.Global.Callwrapper.SetProperty("CreateEmp", "Screenless", True)
+	F.Global.Callwrapper.SetProperty("CreateEmp", "ImportRootFileName", "UploadEmployees")
+	F.Global.Callwrapper.Run("CreateEmp")
+	
+	F.Data.DataTable.Close("dtNewEmployees")
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.EndTry
+Program.Sub.employeeUpload.End
+
+Program.Sub.employeeUpdate.Start
+F.Intrinsic.Control.Try
+	'Subroutine will read in the remainder of the data table w CSV data in it, and use it to update employee master file via object Payroll.Employee mode 63
+	'This mode doesn't work. Will use sql until this is fixed in R&D 
+	'Use SaveToDB to update existing employees 
+	
+	'Shift@!@SHIFT*!*
+	'Shift is being left out for now
+'	F.Data.DataTable.SaveToDB("dtUpdateEmp", "con", "EMPLOYEE_MSTR", "EmployeeID", 256, "EmployeeID@!@EMPLOYEE*!*PSQLName@!@NAME*!*HireDate@!@DATE_HIRE*!*TermDate@!@DATE_TERMINATION*!*EmpInitials@!@EMPL_INITIALS*!*Department@!@DEPT_EMPLOYEE*!*PayRate@!@RATE*!*PayFreq@!@FREQUENCY*!*PayType@!@PAY_TYPE")
+
+	F.Data.DataTable.SaveToDB("dtUpdateEmp", "con", "EMPLOYEE_MSTR", "EmployeeID", 256, "EmployeeID@!@EMPLOYEE*!*PSQLName@!@NAME*!*HireDate@!@DATE_HIRE*!*TermDate@!@DATE_TERMINATION*!*PayRate@!@RATE*!*PayFreq@!@FREQUENCY*!*PayType@!@PAY_TYPE")
+	
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.EndTry
+Program.Sub.employeeUpdate.End
+
+Program.Sub.f_Main_UnLoad.Start
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.If(V.Global.bConOpen,=,True)
+	F.ODBC.Connection!con.Close
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.EndTry
+Program.Sub.f_Main_UnLoad.End
+
+Program.Sub.ErrorMsg.Start
+v.Local.sError.Declare
+V.Local.iRet.Declare
+
+F.Intrinsic.Control.If(V.Global.bConOpen)
+	F.ODBC.Connection!con.Close
+F.Intrinsic.Control.EndIf
+
+'Add conditions to move to fail folder if called from employeeUpdate or employeeUpload subroutine
+F.Intrinsic.Control.If(V.Ambient.SubroutineCalledFrom, =, "employeeUpload", OR, V.Ambient.SubroutineCalledFrom, =, "employeeUpdate")
+	F.Intrinsic.File.MoveFile(V.Global.sCurrentFile, V.Global.sFailPath, V.Local.iRet)
+F.Intrinsic.Control.EndIf
+
+'Generic Error message.
+f.Intrinsic.String.Build("Project GCG_6752_Emp_File_Update.g2u {0}{0}Subroutine: {1}{0}Error: {2} with Description: {3}", v.Ambient.NewLine, v.Args.CurrentSub, v.Ambient.ErrorNumber, v.Ambient.ErrorDescription, v.Local.sError)
+f.Intrinsic.UI.Msgbox(v.Local.sError)
+Program.Sub.ErrorMsg.End
+
+Program.Sub.Comments.Start
+${$5$}$20.1.8649.24509$}$1
+${$6$}$triley$}$20231002150928004$}$iK6nerqp9nur1h1iSBfRKBBz1ENCgYv6g64z+8p/2K05P426o3tx/hNWtFx+j0QL1g8RNd7FOds=
+Program.Sub.Comments.End
